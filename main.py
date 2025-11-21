@@ -1,4 +1,4 @@
-from dsk.api import DeepSeekAPI
+from ron.api import DeepSeekAPI
 
 api = DeepSeekAPI("Your Token")
 chat = api.create_chat_session()
