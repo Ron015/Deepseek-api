@@ -170,24 +170,67 @@ class DeepSeekAPI:
             return response['data']['biz_data']['id']
         except KeyError:
             raise APIError("Invalid session creation response format from server")
-
-    def chat_completion(self,
-                        chat_session_id: str,
-                        prompt: str,
-                        parent_message_id: Optional[str] = None,
-                        thinking_enabled: bool = False,
-                        search_enabled: bool = False):
     
-        json_data = {
-            'chat_session_id': chat_session_id,
-            'parent_message_id': parent_message_id,
-            'prompt': prompt,
-            'ref_file_ids': [],
-            'thinking_enabled': thinking_enabled,
-            'search_enabled': search_enabled,
+    def chat_completion(
+        self,
+        chat_session_id: str,
+        prompt: str,
+        parent_message_id: Optional[int] = None,
+        thinking_enabled: bool = False,
+        search_enabled: bool = False
+    ) -> str:
+    
+        def consume_stream(response):
+            text = ""
+            incomplete = False
+            message_id = None
+            data_lines = []
+    
+            for raw in response.iter_lines():
+                if not raw:
+                    if data_lines:
+                        joined = "\n".join(data_lines).strip()
+                        try:
+                            parsed = json.loads(joined)
+    
+                            # ✅ TEXT
+                            if isinstance(parsed.get("v"), str):
+                                text += parsed["v"]
+    
+                            # 🧠 MESSAGE ID
+                            elif isinstance(parsed.get("v"), dict):
+                                resp = parsed["v"].get("response")
+                                if resp and "message_id" in resp:
+                                    message_id = resp["message_id"]
+    
+                            # 🔴 INCOMPLETE STATUS
+                            elif isinstance(parsed.get("v"), list):
+                                for item in parsed["v"]:
+                                    if item.get("p") == "status" and item.get("v") == "INCOMPLETE":
+                                        incomplete = True
+    
+                        except Exception:
+                            pass
+    
+                        data_lines = []
+                    continue
+    
+                decoded = raw.decode(errors="ignore").strip()
+                if decoded.startswith("data:"):
+                    data_lines.append(decoded[5:].strip())
+    
+            return text, incomplete, message_id
+    
+        # 🔥 FIRST REQUEST
+        payload = {
+            "chat_session_id": chat_session_id,
+            "parent_message_id": parent_message_id,
+            "prompt": prompt,
+            "ref_file_ids": [],
+            "thinking_enabled": thinking_enabled,
+            "search_enabled": search_enabled,
         }
     
-        # POW
         challenge = self._get_pow_challenge()
         pow_response = self.pow_solver.solve_challenge(challenge)
         headers = self._get_headers(pow_response)
@@ -195,63 +238,43 @@ class DeepSeekAPI:
         response = requests.post(
             f"{self.BASE_URL}/chat/completion",
             headers=headers,
-            json=json_data,
+            json=payload,
             cookies=self.cookies,
-            impersonate='chrome120',
+            impersonate="chrome120",
             stream=True,
             timeout=60
         )
     
-        full_text = ""
-        data_lines = []
+        full_text, incomplete, message_id = consume_stream(response)
     
-        for raw in response.iter_lines():
-            if not raw:
-                if data_lines:
-                    joined = "\n".join(data_lines).strip()
-                    try:
-                        parsed = json.loads(joined)
+        # 🔁 DIRECT AUTO-RESUME (APPEND MODE)
+        while incomplete and message_id is not None:
+            resume_payload = {
+                "chat_session_id": chat_session_id,
+                "message_id": message_id,
+                "ack_to_resume": True
+            }
     
-                        if "v" in parsed:
-                            full_text += parsed["v"]
-                        elif "choices" in parsed:
-                            delta = parsed["choices"][0].get("delta", {})
-                            if "content" in delta:
-                                full_text += delta["content"]
-                    except:
-                        pass
+            challenge = self._get_pow_challenge()
+            pow_response = self.pow_solver.solve_challenge(challenge)
+            headers = self._get_headers(pow_response)
     
-                    data_lines = []
-                continue
+            response = requests.post(
+                f"{self.BASE_URL}/chat/continue",
+                headers=headers,
+                json=resume_payload,
+                cookies=self.cookies,
+                impersonate="chrome120",
+                stream=True,
+                timeout=60
+            )
     
-            decoded = raw.decode(errors="ignore").strip()
-            if decoded.startswith("data:"):
-                data_lines.append(decoded[5:].strip())
+            resumed_text, incomplete, new_message_id = consume_stream(response)
+    
+            # 🔥 APPEND RESUMED TEXT
+            full_text += resumed_text
+    
+            if new_message_id is not None:
+                message_id = new_message_id
     
         return full_text
-    
-    def _parse_chunk(self, chunk: bytes) -> Optional[Dict[str, Any]]:
-        """Parse a SSE chunk from the API response"""
-        if not chunk:
-            return None
-
-        try:
-            if chunk.startswith(b'data: '):
-                data = json.loads(chunk[6:])
-
-                if 'choices' in data and data['choices']:
-                    choice = data['choices'][0]
-                    if 'delta' in choice:
-                        delta = choice['delta']
-
-                        return {
-                            'content': delta.get('content', ''),
-                            'type': delta.get('type', ''),
-                            'finish_reason': choice.get('finish_reason')
-                        }
-        except json.JSONDecodeError:
-            raise APIError("Invalid JSON in response chunk")
-        except Exception as e:
-            raise APIError(f"Error parsing chunk: {str(e)}")
-
-        return None
