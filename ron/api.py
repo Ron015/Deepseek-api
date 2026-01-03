@@ -199,32 +199,25 @@ class DeepSeekAPI:
             cookies=self.cookies,
             impersonate='chrome120',
             stream=True,
-            timeout=None
+            timeout=60
         )
     
         full_text = ""
         data_lines = []
     
         for raw in response.iter_lines():
-    
             if not raw:
-                # event ended
                 if data_lines:
                     joined = "\n".join(data_lines).strip()
-    
                     try:
                         parsed = json.loads(joined)
     
-                        # DeepSeek sometimes sends text in key "v"
                         if "v" in parsed:
                             full_text += parsed["v"]
-    
-                        # Or maybe text is inside choices/delta
                         elif "choices" in parsed:
                             delta = parsed["choices"][0].get("delta", {})
                             if "content" in delta:
                                 full_text += delta["content"]
-    
                     except:
                         pass
     
@@ -232,14 +225,11 @@ class DeepSeekAPI:
                 continue
     
             decoded = raw.decode(errors="ignore").strip()
-    
             if decoded.startswith("data:"):
                 data_lines.append(decoded[5:].strip())
-                continue
     
-        # return final fully joined text
-        yield full_text
-
+        return full_text
+    
     def _parse_chunk(self, chunk: bytes) -> Optional[Dict[str, Any]]:
         """Parse a SSE chunk from the API response"""
         if not chunk:

@@ -1,7 +1,7 @@
 from ron.api import DeepSeekAPI
 
-api = DeepSeekAPI("Your Token")
+api = DeepSeekAPI("Your TOKEN")
 chat = api.create_chat_session()
 
-for full_response in api.chat_completion(chat, "What is Python?"):
-    print(full_response)
+response = api.chat_completion(chat, "Hello Deepseek")
+print(response)
