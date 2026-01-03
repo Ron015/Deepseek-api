@@ -1,4 +1,4 @@
-# DeepSeek4Free
+# DeepSeek-api
 
 A Python package for interacting with the DeepSeek AI chat API. This package provides a clean interface to interact with DeepSeek's chat model, with support for streaming responses, thinking process visibility, and web search capabilities.
 
